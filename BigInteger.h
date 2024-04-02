@@ -12,6 +12,7 @@
 
 #include <string>
 #include <string_view>
+#include <span>
 #include <iostream>
 #include <limits>
 #include <concepts>
@@ -32,7 +33,7 @@ private:
 
     static constexpr uint64_t MaxDigit = std::numeric_limits<uint64_t>::max();
 
-    [[nodiscard]] constexpr size_t GetLength() const noexcept {
+    constexpr size_t GetLength() const noexcept {
         return std::max(static_cast<size_t>(Utils::Abs(size)), static_cast<size_t>(1));
     }
 
@@ -128,31 +129,31 @@ public:
     }
 
 public:
-    [[nodiscard]] constexpr int sign() const noexcept {
+    constexpr int sign() const noexcept {
         return Utils::GetSign(size);
     }
 
-    [[nodiscard]] constexpr bool is_zero() const noexcept {
+    constexpr bool is_zero() const noexcept {
         return size == 0;
     }
 
-    [[nodiscard]] constexpr bool is_positive() const noexcept {
+    constexpr bool is_positive() const noexcept {
         return size > 0;
     }
 
-    [[nodiscard]] constexpr bool is_negative() const noexcept {
+    constexpr bool is_negative() const noexcept {
         return size < 0;
     }
 
-    [[nodiscard]] constexpr bool is_even() const noexcept {
+    constexpr bool is_even() const noexcept {
         return (data[0] & 1) == 0;
     }
 
-    [[nodiscard]] constexpr bool is_odd() const noexcept {
+    constexpr bool is_odd() const noexcept {
         return (data[0] & 1) == 1;
     }
 
-    [[nodiscard]] constexpr size_t bit_count() const noexcept {
+    constexpr size_t bit_count() const noexcept {
         if (size < 0) {
             return -1;
         }
@@ -163,7 +164,7 @@ public:
         return len * 64 + std::bit_width(data[len]);
     }
 
-    [[nodiscard]] constexpr size_t leading_zeros() const noexcept {
+    constexpr size_t leading_zeros() const noexcept {
         if (size < 0) {
             return 0;
         }
@@ -173,7 +174,7 @@ public:
         return std::countl_zero(data[size - 1]);
     }
 
-    [[nodiscard]] constexpr size_t tailing_zeros() const noexcept {
+    constexpr size_t tailing_zeros() const noexcept {
         if (size == 0) {
             return -1;
         }
@@ -190,7 +191,7 @@ public:
         return i * 64 + std::countr_zero(x);
     }
 
-    [[nodiscard]] constexpr bool is_power_of_2() const noexcept {
+    constexpr bool is_power_of_2() const noexcept {
         if (size <= 0) {
             return false;
         }
@@ -202,7 +203,7 @@ public:
         return std::has_single_bit(data[size - 1]);
     }
 
-    [[nodiscard]] std::string to_string(int radix = 10) const {
+    std::string to_string(int radix = 10) const {
         if (radix < 2 || radix > 36) {
             throw std::out_of_range("radix must be between 2 and 36");
         }
@@ -226,7 +227,7 @@ public: // 强制类型转换运算符
 
 #ifdef __SIZEOF_INT128__
     constexpr explicit operator __uint128_t() const noexcept {
-        const __uint128_t h = size < -1 || size > 1 ? data[1] : 0;
+        const __uint128_t h = size > 1 || size < -1 ? data[1] : 0;
         const __uint128_t u = (h << 64) | data[0];
         return size < 0 ? -u : u;
     }
@@ -458,13 +459,13 @@ public: // & | ^ 运算
 
         const auto vlen = -v.size;
         // 0 > u >= v  结果为负数，长度 <= vlen + 1
+        /*
+         *   -<-u & -v>
+         * = -[~(u - 1) & ~(v - 1)]
+         * = ~[~(u - 1) & ~(v - 1)] + 1
+         * = <[(u - 1) | (v - 1)] + 1>
+         */
         if (u.size < 0) {
-            /*
-             *   -(<-u> & <-v>)
-             * = -[~(u - 1) & ~(v - 1)]
-             * = ~[~(u - 1) & ~(v - 1)] + 1
-             * = <[(u - 1) | (v - 1)] + 1>
-             */
             const auto ulen = -u.size;
             // u.data和v.data最高位不为0 => ui < ulen，vi < vlen
             int64_t ui = 0;
@@ -490,30 +491,31 @@ public: // & | ^ 运算
                  * 0  ui  ulen  vi  vlen
                  * res[0, vi) = (xxx | MaxDigit) + 1 = 0 向前进1
                  * res[vi] = (0 | (v.data[vi] - 1)) + 1 = v.data[vi] --|
-                 * res[vi + 1, vlen) = 0 | v.data[vi + 1, vlen) --------> res[vi, vlen) = v.data[vi, vlen)
+                 * res[vi + 1, vlen) = (0 | v.data[vi + 1, vlen)) ------> res[vi, vlen) = v.data[vi, vlen)
                  */
                 std::copy(v.data + vi, v.data + vlen, res_data + vi);
             } else {
                 /*
                  * 0  ui  vi  ulen  vlen
-                 *   l = u.data[vi] - (ui == vi)
+                 *   mi = vi
+                 *   l = u.data[ui] - (ui == vi)
                  *   r = v.data[vi] - 1
                  * 0  vi  ui  ulen  vlen
-                 *   swap(ui, vi);
-                 *   l = u.data[vi] - 1
+                 *   mi = ui
+                 *   l = u.data[ui] - 1
                  *   r = v.data[vi]
-                 * res[0, vi) = (xxx | MaxDigit) + 1 = 0 向前进1
-                 * res[vi] = l | r                                   ----------------|
-                 * res[vi + 1, ulen) = u.data[vi + 1, ulen) | v.data[vi + 1, ulen) --|
-                 * res[ulen, vlen) = v.data[ulen, vlen)      -------------------------> res[vi, vlen) += 1
+                 * res[0, mi) = MaxDigit + 1 = 0 向前进1
+                 * res[mi] = l | r                                   ----------------|
+                 * res[mi + 1, ulen) = u.data[mi + 1, ulen) | v.data[mi + 1, ulen) --|
+                 * res[ulen, vlen) = v.data[ulen, vlen)      -------------------------> res[mi, vlen) += 1
                  */
                 if (vi >= ui) {
                     res_data[vi] = (u.data[ui] - (ui == vi)) | (v.data[vi] - 1);
                 } else {
+                    res_data[ui] = (u.data[ui] - 1) | v.data[vi];
                     std::swap(ui, vi);
-                    res_data[vi] = (u.data[vi] - 1) | v.data[vi];
                 }
-                for (size_t i = vi + 1; i < ulen; ++i) {
+                for (int64_t i = vi + 1; i < ulen; ++i) {
                     res_data[i] = u.data[i] | v.data[i];
                 }
                 std::copy(v.data + ulen, v.data + vlen, res_data + ulen);
@@ -525,31 +527,32 @@ public: // & | ^ 运算
             return BigInteger{-res_len, res_data};
         }
 
-        // u > 0 > v  结果为正数，长度 <= ulen
-        // <u & -v>
-        int64_t vi = 0;
-        while (v.data[vi] == 0) {
-            ++vi;
-        }
+        // u > 0 > v
+        // 结果为正数，长度 <= ulen
         /*
+         * -v = ~v + 1
          * (-v)[0, vi) = 0
          * (-v)[vi] = -v[vi]
          * (-v)[vi + 1, vlen) = ~[vi + 1, vlen)
         */
+        int64_t vi = 0;
+        while (v.data[vi] == 0) {
+            ++vi;
+        }
 
         if (vi >= u.size) {
+            // 0  a.size  vi  vlen
             return zero;
         }
 
         auto res_size = u.size;
         const auto res_data = new uint64_t[res_size];
-        /*
-         * res[0, vi) = xxx & 0 = 0
-         * res[vi] = u.data[vi] & -v.data[vi] 可能为0
-         */
         std::fill_n(res_data, vi, 0);
         res_data[vi] = u.data[vi] & -v.data[vi];
         /*
+         * res[0, vi) = 0
+         * res[vi] = u.data[vi] & -v.data[vi] 可能为0
+         *
          * 0  vi  vlen  u.size
          * res[vi + 1, vlen) = u.data[vi + 1, vlen) & ~v.data[vi + 1, vlen)
          * res[vlen, u.size) = u.data[vlen, u.size) 不为0
@@ -558,7 +561,7 @@ public: // & | ^ 运算
          * res[vi + 1, u.size) = u.data[vi + 1, u.size) & ~v.data[vi + 1, vlen)  可能为0
          */
         if (u.size > vlen) {
-            for (size_t i = vi + 1; i < vlen; ++i) {
+            for (int64_t i = vi + 1; i < vlen; ++i) {
                 res_data[i] = u.data[i] & ~v.data[i];
             }
             std::copy(u.data + vlen, u.data + u.size, res_data + vlen);
@@ -569,7 +572,7 @@ public: // & | ^ 运算
             if (res_size == vi + 1 && res_data[vi] == 0) {
                 res_size = 0;
             }
-            for (size_t i = vi + 1; i < res_size; ++i) {
+            for (int64_t i = vi + 1; i < res_size; ++i) {
                 res_data[i] = u.data[i] & ~v.data[i];
             }
         }
@@ -583,143 +586,102 @@ public: // & | ^ 运算
         return *this;
     }
 
-    template <std::integral T>
-    friend constexpr BigInteger operator&(const BigInteger& lhs, T rhs) noexcept {
-        if (rhs >= 0) {
-            const auto val = static_cast<T>(lhs) & rhs;
-            if (val > MaxDigit) {
-                return BigInteger{2, new uint64_t[2]{static_cast<uint64_t>(val), static_cast<uint64_t>(val >> 64)}};
-            } else {
-                return BigInteger{val != 0, new uint64_t[1]{val}};
+    friend constexpr BigInteger operator|(const BigInteger& lhs, const BigInteger& rhs) noexcept {
+        const BigInteger& u = lhs.size >= rhs.size ? lhs : rhs;
+        const BigInteger& v = &u == &lhs ? rhs : lhs;
+
+        // u >= v >= 0
+        // 结果为正数，长度 <= u.size
+        if (v.size >= 0) {
+            if (u.size == 0) {
+                return zero;
             }
-        }
-        if (lhs.size >= 0) {
-            const auto res_size = std::max(lhs.size, static_cast<int64_t>(1 + (sizeof(T) > sizeof(uint64_t))));
+            const auto res_size = u.size;
             const auto res_data = new uint64_t[res_size];
-            std::copy_n(lhs.data, lhs.size, res_data);
-            res_data[0] &= rhs;
-            return BigInteger{1, new uint64_t[1]{static_cast<uint64_t>(rhs)}};
-        } else {
-            return lhs & BigInteger{2, new uint64_t[2]{static_cast<uint64_t>(rhs), static_cast<uint64_t>(rhs >> 64)}};
+            for (int64_t i = 0; i < v.size; ++i) {
+                res_data[i] = u.data[i] | v.data[i];
+            }
+            std::copy(u.data + v.size, u.data + u.size, res_data + v.size);
+            return BigInteger{res_size, res_data};
         }
-    }
 
-    const auto u0 = lhs.size < 0 ? -lhs.data[0] : lhs.data[0];
-    const T u = lhs.size < 0 ? -lhs.data[0] : lhs.data[0];
-    const uint64_t val{}
-    =
-    u& rhs;
-    if (lhs.size >= 0 || rhs >= 0) {
-        return BigInteger{1, new uint64_t[1]{u & rhs}};
-    }
-    const std::make_unsigned_t<T> v = Utils::Abs(rhs);
-    if (v > MaxDigit) {
-        return lhs & BigInteger{2, new uint64_t[2]{static_cast<uint64_t>(u), static_cast<uint64_t>(u >> 64)}};
-    }
-}
+        const auto vlen = -v.size;
 
-friend constexpr BigInteger
-
-operator|(const BigInteger& lhs, const BigInteger& rhs) noexcept {
-    const BigInteger& u = lhs.size >= rhs.size ? lhs : rhs;
-    const BigInteger& v = &u == &lhs ? rhs : lhs;
-
-    // u >= v >= 0
-    // 结果为正数或0，长度 <= u.size
-    if (v.size >= 0) {
-        if (u.size == 0) {
-            return zero;
-        }
-        const auto res_size = u.size;
-        const auto res_data = new uint64_t[res_size];
-        for (size_t i = 0; i < v.size; ++i) {
-            res_data[i] = u.data[i] | v.data[i];
-        }
-        std::copy(u.data + v.size, u.data + u.size, res_data + v.size);
-        return BigInteger{res_size, res_data};
-    }
-
-    const auto vlen = -v.size;
-    // 0 > u >= v  结果为负数，长度 <= ulen
-    if (u.size < 0) {
-        /*
-         *   -(<-u> | <-v>)
-         * = ~[-u | -v] + 1
-         * = ~[~(u - 1) | ~(v - 1)] + 1
-         * = <[(u - 1) & (v - 1)] + 1>
-        */
-        const auto ulen = -u.size;
-
-        int64_t ui = 0;
-        while (u.data[ui] == 0) {
-            ++ui;
-        }
-        int64_t vi = 0;
-        while (v.data[vi] == 0) {
-            ++vi;
-        }
-        /*
-         * (u - 1)[0, ui) = MaxDigit
-         * (u - 1)[ui] = u.data[ui] - 1
-         * (u - 1)[ui + 1, ulen) = u.data[ui + 1, ulen)
-         * (v - 1)[0, vi) = MaxDigit
-         * (v - 1)[vi] = v.data[vi] - 1
-         * (v - 1)[vi + 1, vlen) = v.data[vi + 1, vlen)
-         */
-        auto res_len = ulen;
-        const auto res_data = new uint64_t[res_len];
-        if (vi >= ulen) {
+        // 0 > u >= v
+        // 结果为负数，长度 <= ulen
+        if (u.size < 0) {
             /*
-             * |0  ui  ulen|  vi  vlen
-             * res[ui] = ((u.data[ui] - 1) & MaxDigit) + 1 = u.data[ui] -------------------|
-             * res[ui + 1, ulen) = u.data[ui + 1, ulen) & MaxDigit = u.data[ui + 1, ulen) --> res[ui, ulen) = u.data[ui, ulen)  // 不为0
-             */
-            std::copy(u.data + ui, u.data + ulen, res_data + ui);
-        } else {
-            if (vi == ui) {
+             *   -<-u | -v>
+             * = ~[-u | -v] + 1
+             * = ~[~(u - 1) | ~(v - 1)] + 1
+             * = <[(u - 1) & (v - 1)] + 1>
+            */
+            const auto ulen = -u.size;
+
+            int64_t ui = 0;
+            while (u.data[ui] == 0) {
+                ++ui;
+            }
+            int64_t vi = 0;
+            while (v.data[vi] == 0) {
+                ++vi;
+            }
+
+            auto res_len = ulen;
+            const auto res_data = new uint64_t[res_len];
+            if (vi >= ulen) {
                 /*
-                 * |0  ui|
-                 * |0  vi|
+                 * |0  ui  ulen|  vi  vlen
+                 * res[ui] = ((u.data[ui] - 1) & MaxDigit) + 1 = u.data[ui] -------------------|
+                 * res[ui + 1, ulen) = u.data[ui + 1, ulen) & MaxDigit = u.data[ui + 1, ulen) --> res[ui, ulen) = u.data[ui, ulen)  // 不为0
                  */
-                /*
-                 *   ((u.data[ui] - 1) & (v.data[vi] - 1)) + 1
-                 * = -~((u.data[ui] - 1) & (v.data[vi] - 1))
-                 * = -(~(u.data[ui] - 1) | ~(v.data[vi] - 1))
-                 * = -(-u.data[ui] | -v.data[vi])
-                 */
-                res_data[vi] = -(-u.data[vi] | -v.data[vi]); // 不为0
+                std::copy(u.data + ui, u.data + ulen, res_data + ui);
             } else {
-                auto s = u.data;
-                auto l = v.data;
-                if (ui > vi) {
-                    std::swap(s, l);
-                    std::swap(ui, vi);
+                if (vi == ui) {
+                    /*
+                     * |0  ui|
+                     * |0  vi|
+                     */
+                    /*   ~~((a - 1) & (b - 1)) + 1
+                     * = ~(~(a - 1) | ~(b - 1)) + 1
+                     * = ~(-a | -b) + 1
+                     * = -a | -b
+                     */
+                    res_data[vi] = -(-u.data[vi] | -v.data[vi]); // 不为0
+                } else {
+                    auto s = u.data;
+                    auto l = v.data;
+                    if (ui > vi) {
+                        std::swap(s, l);
+                        std::swap(ui, vi);
+                    }
+                    /*
+                     * |0  ui    |
+                     * |0      vi|
+                     * res[ui] = ((s[ui] - 1) & MaxDigit) + 1 = s[ui] -------------|  // 不为0
+                     * res[ui + 1, vi) = s[ui + 1, vi) & MaxDigit = s[ui + 1, vi) --> res[ui, vi) = s[ui, vi) // 可能为0
+                     * res[vi] = s[vi] & (l[vi] - 1) // 可能为0
+                     */
+                    std::copy(s + ui, s + vi, res_data + ui);
+                    res_data[vi] = s[vi] & (l[vi] - 1);
                 }
-                /*
-                 * |0  ui    |
-                 * |0      vi|
-                 * res[ui] = ((s[ui] - 1) & MaxDigit) + 1 = s[ui] -------------|  // 不为0
-                 * res[ui + 1, vi) = s[ui + 1, vi) & MaxDigit = s[ui + 1, vi) --> res[ui, vi) = s[ui, vi) // 可能为0
-                 * res[vi] = s[vi] & (l[vi] - 1) // 可能为0
-                 */
-                std::copy(s + ui, s + vi, res_data + ui);
-                res_data[vi] = s[vi] & (l[vi] - 1);
+                for (int64_t i = vi + 1; i < res_len; ++i) {
+                    res_data[i] = u.data[i] & v.data[i];
+                }
+                // res[ui]都不为0，长度最小为ui
+                while (res_len > ui + 1 && res_data[res_len - 1] == 0) {
+                    --res_len;
+                }
             }
-            for (size_t i = vi + 1; i < res_len; ++i) {
-                res_data[i] = u.data[i] & v.data[i];
-            }
-            // res[ui]都不为0，长度最小为ui
-            while (res_len > ui + 1 && res_data[res_len - 1] == 0) {
-                --res_len;
-            }
+            std::fill_n(res_data, ui, 0); // MaxDigit + 1
+            return BigInteger{-res_len, res_data};
         }
-        std::fill_n(res_data, ui, 0); // MaxDigit + 1
-        return BigInteger{-res_len, res_data};
+
+        // u > 0 > v
+        // 结果为负数，长度
     }
 
-    // u > 0 > v  结果为负数，长度 <= min(ulen, vlen)
-}
-
+public:
 };
 
 
