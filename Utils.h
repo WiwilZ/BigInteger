@@ -12,7 +12,6 @@
 #include <x86intrin.h>
 #endif
 
-
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -22,8 +21,6 @@
 #include <bit>
 #include <span>
 #include <algorithm>
-#include <ranges>
-#include <compare>
 
 
 struct int128 {
@@ -69,68 +66,69 @@ namespace Naive {
     }
 
     constexpr uint64_t MulHigh(uint64_t a, uint64_t b) noexcept {
-        const uint32_t a1 = a >> 32;
-        const uint32_t a0 = a;
-        const uint32_t b1 = b >> 32;
-        const uint32_t b0 = b;
+        constexpr uint64_t mask = 0xffffffff;
 
-        const uint64_t c0 = static_cast<uint64_t>(a0) * b0;
-        const uint64_t c1 = static_cast<uint64_t>(a1) * b1;
-        const uint64_t c2 = (static_cast<int64_t>(a0) - a1) * (static_cast<int64_t>(b0) - b1);
+        const uint64_t a1 = a >> 32;
+        const uint64_t a0 = a & mask;
+        const uint64_t b1 = b >> 32;
+        const uint64_t b0 = b & mask;
+        /*
+         *   |    |     |  a0 * b0  |
+         * + |    |  a1 * b0  |     |
+         * - |    |  a0 * b1  |     |
+         * + |  a1 * b1  |
+         * --------------------------
+         *   |   high   |          |
+         */
+        uint64_t t = (a0 * b0) >> 32;
 
-        const uint32_t c0h = c0 >> 32;
-        const uint32_t c0l = c0;
-        const uint32_t c1h = c1 >> 32;
-        const uint32_t c1l = c1;
-        const uint32_t c2h = c2 >> 32;
-        const uint32_t c2l = c2;
+        t += a1 * b0;
+        uint64_t high = t >> 32;
+        t &= mask;
 
-        const uint64_t t = static_cast<uint64_t>(c0h) + c0l + c1l - c2l;
-        const uint64_t high = static_cast<uint64_t>(c0h) + c1h - c2h + (t >> 32) + c1;
+        t += a0 * b1;
+        high += t >> 32;
+
+        high += a1 * b1;
+
         return high;
     }
 
     constexpr uint128 Mul(uint64_t a, uint64_t b) noexcept {
-        /*
-         * Karatsuba算法
-         * a = a1 * 2^32 + a0
-         * b = b1 * 2^32 + b0
-         * c = a * b
-         *   = a1 * b1 * 2^64 + [a0 * b0 + a1 * b1 - (a0 - a1) * (b0 - b1)] * 2^32 + a0 * b0
-        */
-        const uint32_t a1 = a >> 32;
-        const uint32_t a0 = a;
-        const uint32_t b1 = b >> 32;
-        const uint32_t b0 = b;
+        constexpr uint64_t mask = 0xffffffff;
 
-        const uint64_t c0 = static_cast<uint64_t>(a0) * b0;
-        const uint64_t c1 = static_cast<uint64_t>(a1) * b1;
-        const uint64_t c2 = (static_cast<int64_t>(a0) - a1) * (static_cast<int64_t>(b0) - b1);
-
-        const uint32_t c0h = c0 >> 32;
-        const uint32_t c0l = c0;
-        const uint32_t c1h = c1 >> 32;
-        const uint32_t c1l = c1;
-        const uint32_t c2h = c2 >> 32;
-        const uint32_t c2l = c2;
+        const uint64_t a1 = a >> 32;
+        const uint64_t a0 = a & mask;
+        const uint64_t b1 = b >> 32;
+        const uint64_t b0 = b & mask;
         /*
-         *   |    |     | c0h | c0l |
-         * + |    | c0h | c0l |     |
-         * + |    | c1h | c1l |     |
-         * - |    | c2h | c2l |     |
-         * --------------------------
-         *        |     t     |     |
-         * + |    c1    |
+         *   |    |     |  a0 * b0  |
+         * + |    |  a1 * b0  |     |
+         * - |    |  a0 * b1  |     |
+         * + |  a1 * b1  |
          * --------------------------
          *   |   high   |   low     |
          */
-        const uint64_t t = static_cast<uint64_t>(c0h) + c0l + c1l - c2l;
-        const uint64_t low = (t << 32) | c0l;
-        const uint64_t high = static_cast<uint64_t>(c0h) + c1h - c2h + (t >> 32) + c1;
+        uint64_t low = a0 * b0;
+        uint64_t t = low >> 32;
+        low &= mask;
+
+        t += a1 * b0;
+        uint64_t high = t >> 32;
+        t &= mask;
+
+        t += a0 * b1;
+        low |= t << 32;
+        high += t >> 32;
+
+        high += a1 * b1;
+
         return {low, high};
     }
 
     constexpr DivResult<uint64_t> Div(uint128 a, uint64_t b) noexcept {
+        constexpr uint64_t mask = 0xffffffff;
+
         uint64_t ah = a.high;
         uint64_t al = a.low;
 
@@ -161,24 +159,24 @@ namespace Naive {
          * t0 - t1 <= 0 => qhat * b - a <= 0 =>       qhat * b <= a => q = qhat
         */
 
-        const uint32_t al1 = al >> 32;
-        const uint32_t al0 = al;
-        const uint32_t b1 = b >> 32;
-        const uint32_t b0 = b;
+        const uint64_t al1 = al >> 32;
+        const uint64_t al0 = al & mask;
+        const uint64_t b1 = b >> 32;
+        const uint64_t b0 = b & mask;
 
         uint64_t q1 = ah / b1;
-        const uint64_t r1 = ah % b1;
+        uint64_t r = ah % b1;
         uint64_t t0 = q1 * b0;
-        uint64_t t1 = (r1 << 32) | al1;
+        uint64_t t1 = (r << 32) | al1;
         if (t0 > t1) {
             q1 -= ((t0 - t1) > b) + 1;
         }
         uint64_t u = ((ah << 32) | al1) - q1 * b; // remainder is guaranteed to be 64 bits
 
         uint64_t q0 = u / b1;
-        const uint64_t r0 = u % b1;
+        r = u % b1;
         t0 = q0 * b0;
-        t1 = (r0 << 32) | al0;
+        t1 = (r << 32) | al0;
         if (t0 > t1) {
             q0 -= ((t0 - t1) > b) + 1;
         }
@@ -199,7 +197,7 @@ namespace Utils {
         return v < 0 ? -static_cast<std::make_unsigned_t<T>>(v) : v;
     }
 
-    constexpr uint64_t* Extend(uint64_t* old_ptr, size_t old_size, size_t new_size) noexcept {
+    constexpr uint64_t* Extend(uint64_t* const old_ptr, size_t old_size, size_t new_size) noexcept {
         if (new_size <= old_size) {
             return old_ptr;
         }
@@ -224,7 +222,7 @@ namespace Utils {
         return std::strong_ordering::equal;
     }
 
-    constexpr int64_t Normalize(const uint64_t* const data, int64_t size) noexcept {
+    constexpr size_t Normalize(const uint64_t* const data, int64_t size) noexcept {
         int64_t i = size;
         while (i > 0 && data[i - 1] == 0) {
             --i;
@@ -232,7 +230,7 @@ namespace Utils {
         return i;
     }
 
-    constexpr uint64_t Increase(uint64_t* data, int64_t size) noexcept {
+    constexpr bool Increase(uint64_t* const data, int64_t size) noexcept {
         // 最低位开始，连续的uint64_t::max结果为0，向第一个非uint64_t::max位x进1
         // x += 1，不向前进位
         int64_t i = 0;
@@ -242,12 +240,12 @@ namespace Utils {
         }
         if (i < size) {
             ++data[i];
-            return 0;
+            return false;
         }
-        return 1;
+        return true;
     }
 
-    constexpr uint64_t Increase(uint64_t* dst, const uint64_t* const src, int64_t size) noexcept {
+    constexpr bool Increase(uint64_t* const dst, const uint64_t* const src, int64_t size) noexcept {
         int64_t i = 0;
         while (i < size && src[i] == std::numeric_limits<uint64_t>::max()) {
             dst[i] = 0;
@@ -256,12 +254,12 @@ namespace Utils {
         if (i < size) {
             dst[i] = src[i] + 1;
             std::copy(src + i + 1, src + size, dst + i + 1);
-            return 0;
+            return false;
         }
-        return 1;
+        return true;
     }
 
-    constexpr void Decrease(uint64_t* data, int64_t size) noexcept {
+    constexpr void Decrease(uint64_t* const data, int64_t size) noexcept {
         // data最高位不为0
         // 最低位开始，连续的0结果为uint64_t::max，向第一个非0位x借1
         // x -= 1，不向前借位
@@ -273,7 +271,7 @@ namespace Utils {
         --data[i];
     }
 
-    constexpr void Decrease(uint64_t* dst, const uint64_t* const src, int64_t size) noexcept {
+    constexpr void Decrease(uint64_t* const dst, const uint64_t* const src, int64_t size) noexcept {
         int64_t i = 0;
         while (src[i] == 0) {
             dst[i] = std::numeric_limits<uint64_t>::max();
