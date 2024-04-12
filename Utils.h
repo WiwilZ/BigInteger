@@ -17,10 +17,9 @@
 #include <cstdint>
 #include <cstdlib>
 
-#include <limits>
-#include <bit>
-#include <span>
 #include <algorithm>
+#include <bit>
+#include <limits>
 
 
 struct int128 {
@@ -136,7 +135,7 @@ namespace Naive {
             return {ah / b, al % b};
         }
 
-        const auto shift = std::countl_zero(b);
+        const unsigned shift = std::countl_zero(b);
         if (shift > 0) {
             b <<= shift;
             ah = (ah << shift) | (al >> (64 - shift));
@@ -197,7 +196,7 @@ namespace Utils {
         return v < 0 ? -static_cast<std::make_unsigned_t<T>>(v) : v;
     }
 
-    constexpr uint64_t* Extend(uint64_t* const old_ptr, size_t old_size, size_t new_size) noexcept {
+    constexpr uint64_t* Extend(uint64_t* const old_ptr, size_t old_size, size_t new_size) {
         if (new_size <= old_size) {
             return old_ptr;
         }
@@ -222,7 +221,7 @@ namespace Utils {
         return std::strong_ordering::equal;
     }
 
-    constexpr size_t Normalize(const uint64_t* const data, int64_t size) noexcept {
+    constexpr int64_t Normalize(const uint64_t* const data, int64_t size) noexcept {
         int64_t i = size;
         while (i > 0 && data[i - 1] == 0) {
             --i;

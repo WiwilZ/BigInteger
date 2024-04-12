@@ -10,54 +10,59 @@
 #include <cstdint>
 #include <cstdlib>
 
-#include <string>
-#include <string_view>
-#include <span>
-#include <iostream>
-#include <limits>
-#include <concepts>
+#include <algorithm>
 #include <bit>
 #include <compare>
-#include <algorithm>
+#include <concepts>
+#include <iostream>
+#include <limits>
 #include <ranges>
+#include <span>
+#include <string>
+#include <string_view>
 
 
 class BigInteger {
 private:
-    /*
-    size == 0 => data[0] == 0
-         else => sign(size) * data
-    */
-    int64_t size;
-    uint64_t* data;
+    // number = sign(size) * data
+    int64_t size{};
+    uint64_t* data{};
 
     static constexpr uint64_t MaxDigit = std::numeric_limits<uint64_t>::max();
 
-    constexpr size_t GetLength() const noexcept {
-        return std::max(static_cast<size_t>(Utils::Abs(size)), static_cast<size_t>(1));
+    constexpr int64_t GetLength() const noexcept {
+        const auto x = Utils::Abs(size);
+        return x | (x == 0);
     }
 
     constexpr BigInteger(int64_t size, uint64_t* data) noexcept : size(size), data(data) {}
+
+    template <std::unsigned_integral T>
+    static constexpr BigInteger FromNegative(T v) {
+        if (v > MaxDigit) {
+            return BigInteger{-2, new uint64_t[2]{static_cast<uint64_t>(v), static_cast<uint64_t>(v >> 64)}};
+        }
+        return BigInteger{-(v != 0), new uint64_t[1]{static_cast<uint64_t>(v)}};
+    }
 
 public:
     static const BigInteger zero;
     static const BigInteger one;
     static const BigInteger minus_one;
 
-public: // Big 5
-    constexpr BigInteger() noexcept : size(0), data(new uint64_t[1]{0}) {}
+public:// Big 5
+    constexpr BigInteger() noexcept = default;
 
-    constexpr BigInteger(const BigInteger& v) noexcept {
-        const auto len = v.GetLength();
+    constexpr BigInteger(const BigInteger& v) : size(v.size) {
+        const auto len = Utils::Abs(v.size);
         data = new uint64_t[len];
         std::copy_n(v.data, len, data);
-        size = v.size;
     }
 
     constexpr BigInteger& operator=(const BigInteger& v) noexcept {
         if (this != &v) {
-            const auto len = v.GetLength();
-            data = Utils::Extend(data, GetLength(), len);
+            const auto len = Utils::Abs(v.size);
+            data = Utils::Extend(data, Utils::Abs(size), len);
             std::copy_n(v.data, len, data);
             size = v.size;
         }
@@ -84,32 +89,33 @@ public: // Big 5
 
 public:
     template <std::integral T>
-    constexpr explicit BigInteger(T v) noexcept {
+    constexpr explicit BigInteger(T v) {
         const std::make_unsigned_t<T> u = Utils::Abs(v);
-        if (u > MaxDigit) {
+        if (u > std::numeric_limits<uint64_t>::max()) {
             size = 2;
-            data = new uint64_t[2]{static_cast<uint64_t>(u), static_cast<uint64_t>(u >> 64)};
+            data = new uint64_t[2];
+            data[1] = u >> 64;
         } else {
             size = u != 0;
-            data = new uint64_t[1]{static_cast<uint64_t>(u)};
+            data = new uint64_t[1];
         }
+        data[0] = u;
         if (v < 0) {
             size = -size;
         }
     }
 
     template <std::integral T>
-    constexpr BigInteger& operator=(T v) noexcept {
-        const std::make_unsigned_t<T> u = v < 0 ? -v : v;
-        if (u > MaxDigit) {
+    constexpr BigInteger& operator=(T v) {
+        const std::make_unsigned_t<T> u = Utils::Abs(v);
+        if (u > std::numeric_limits<uint64_t>::max()) {
             data = Utils::Extend(data, GetLength(), 2);
             size = 2;
-            data[1] = u;
-            data[0] = u >> 64;
+            data[1] = u >> 64;
         } else {
             size = u != 0;
-            data[0] = u;
         }
+        data[0] = u;
         if (v < 0) {
             size = -size;
         }
@@ -195,7 +201,7 @@ public:
         if (size <= 0) {
             return false;
         }
-        for (auto p = data; p != data + size - 1; ++p) {
+        for (auto* p = data; p != data + size - 1; ++p) {
             if (*p != 0) {
                 return false;
             }
@@ -214,7 +220,7 @@ public:
         return "";
     }
 
-public: // 强制类型转换运算符
+public:// 强制类型转换运算符
     constexpr explicit operator bool() const noexcept {
         return !is_zero();
     }
@@ -246,7 +252,7 @@ public: // 强制类型转换运算符
         return static_cast<float>(static_cast<double>(*this));
     }
 
-public: // 比较运算
+public:// 比较运算
     friend constexpr std::strong_ordering operator<=>(const BigInteger& lhs, const BigInteger& rhs) noexcept {
         auto cmp = lhs.size <=> rhs.size;
         if (cmp != 0) {
@@ -328,12 +334,12 @@ public: // 比较运算
         return rhs == lhs;
     }
 
-public: // 单目运算
-    constexpr BigInteger operator~() const noexcept {
+public:// 单目运算
+    constexpr BigInteger operator~() const {
         //  x: ~<x> = -x - 1 = -<x + 1>
         // -x: ~<-x> = ~[~(x - 1)] = <x - 1>
         int64_t res_size;
-        const auto res_data = new uint64_t[GetLength() + 1];
+        auto* const res_data = new uint64_t[GetLength() + 1];
         if (size < 0) {
             res_size = -size;
             Utils::Decrease(res_data, data, res_size);
@@ -348,7 +354,7 @@ public: // 单目运算
         return BigInteger{res_size, res_data};
     }
 
-    constexpr void to_bit_not() noexcept {
+    constexpr void to_bit_not() {
         if (size < 0) {
             size = -size;
             Utils::Decrease(data, size);
@@ -367,9 +373,9 @@ public: // 单目运算
         return *this;
     }
 
-    constexpr BigInteger operator-() const noexcept {
+    constexpr BigInteger operator-() const {
         const auto res_len = GetLength();
-        const auto res_data = new uint64_t[res_len];
+        auto* const res_data = new uint64_t[res_len];
         std::copy_n(data, res_len, res_data);
         return BigInteger{-size, res_data};
     }
@@ -378,9 +384,9 @@ public: // 单目运算
         size = -size;
     }
 
-    constexpr BigInteger abs() const noexcept {
-        const int64_t res_len = GetLength();
-        const auto res_data = new uint64_t[res_len];
+    constexpr BigInteger abs() const {
+        const auto res_len = GetLength();
+        auto* const res_data = new uint64_t[res_len];
         std::copy_n(data, res_len, res_data);
         return BigInteger{size == 0 ? 0 : res_len, res_data};
     }
@@ -391,7 +397,7 @@ public: // 单目运算
         }
     }
 
-    constexpr BigInteger& operator++() noexcept {
+    constexpr BigInteger& operator++() {
         //  x: ++<x> = <x + 1>
         // -x: ++<-x> = -<x> + 1 = -<x - 1>
         if (size < 0) {
@@ -407,13 +413,13 @@ public: // 单目运算
         return *this;
     }
 
-    constexpr BigInteger operator++(int) noexcept {
+    constexpr BigInteger operator++(int) {
         BigInteger res(*this);
         ++*this;
         return res;
     }
 
-    constexpr BigInteger& operator--() noexcept {
+    constexpr BigInteger& operator--() {
         //  x: --<x> = <x - 1>
         // -x: --<-x> = <-x> - 1 = -<x + 1>
         if (size > 0) {
@@ -431,254 +437,244 @@ public: // 单目运算
         return *this;
     }
 
-    constexpr BigInteger operator--(int) noexcept {
+    constexpr BigInteger operator--(int) {
         BigInteger res(*this);
         --*this;
         return res;
     }
 
-public: // & | ^ 运算
-    friend constexpr BigInteger operator&(const BigInteger& lhs, const BigInteger& rhs) noexcept {
+public:// & | ^ 运算
+    friend constexpr BigInteger operator&(const BigInteger& lhs, const BigInteger& rhs) {
+        if (lhs.size == 0 || rhs.size == 0) {
+            return zero;
+        }
+
         const BigInteger& u = lhs.size >= rhs.size ? lhs : rhs;
         const BigInteger& v = &u == &lhs ? rhs : lhs;
 
-        // u >= v >= 0  结果为正数或0，长度 <= v.size
-        if (v.size >= 0) {
-            for (int64_t i = v.size - 1; i >= 0; --i) {
-                if ((u.data[i] & v.data[i]) != 0) {
-                    const auto res_size = i + 1;
-                    const auto res_data = new uint64_t[res_size];
-                    for (; i >= 0; --i) {
-                        res_data[i] = u.data[i] & v.data[i];
-                    }
-                    return BigInteger{res_size, res_data};
-                }
+        // u >= v > 0  结果为正数或0，长度 <= v.size
+        if (v.size > 0) {
+            auto res_size = v.size;
+            while (res_size > 0 && (u.data[res_size - 1] & v.data[res_size - 1]) == 0) {
+                --res_size;
             }
-            return zero;
+            if (res_size == 0) {
+                return zero;
+            }
+            auto* const res_data = new uint64_t[res_size];
+            for (size_t i = 0; i < res_size; ++i) {
+                res_data[i] = u.data[i] & v.data[i];
+            }
+            return BigInteger{res_size, res_data};
         }
 
         const auto vlen = -v.size;
         // 0 > u >= v  结果为负数，长度 <= vlen + 1
-        /*
-         *   -<-u & -v>
-         * = -[~(u - 1) & ~(v - 1)]
-         * = ~[~(u - 1) & ~(v - 1)] + 1
-         * = <[(u - 1) | (v - 1)] + 1>
-         */
         if (u.size < 0) {
-            const auto ulen = -u.size;
-            // u.data和v.data最高位不为0 => ui < ulen，vi < vlen
-            int64_t ui = 0;
-            while (u.data[ui] == 0) {
-                ++ui;
-            }
-            int64_t vi = 0;
-            while (v.data[vi] == 0) {
-                ++vi;
-            }
             /*
-             * (u - 1)[0, ui) = MaxDigit
-             * (u - 1)[ui] = u.data[ui] - 1
-             * (u - 1)[ui + 1, ulen) = u.data[ui + 1, ulen)
-             * (v - 1)[0, vi) = MaxDigit
-             * (v - 1)[vi] = v.data[vi] - 1
-             * (v - 1)[vi + 1, vlen) = v.data[vi + 1, vlen)
+             *   -(<-u> & <-v>)
+             * = -[~(u - 1) & ~(v - 1)]
+             * = ~[~(u - 1) & ~(v - 1)] + 1
+             * = [(u - 1) | (v - 1)] + 1
              */
-            auto res_len = vlen;
-            const auto res_data = new uint64_t[res_len + 1];
-            if (vi >= ulen) {
-                /*
-                 * 0  ui  ulen  vi  vlen
-                 * res[0, vi) = (xxx | MaxDigit) + 1 = 0 向前进1
-                 * res[vi] = (0 | (v.data[vi] - 1)) + 1 = v.data[vi] --|
-                 * res[vi + 1, vlen) = (0 | v.data[vi + 1, vlen)) ------> res[vi, vlen) = v.data[vi, vlen)
-                 */
-                std::copy(v.data + vi, v.data + vlen, res_data + vi);
-            } else {
-                /*
-                 * 0  ui  vi  ulen  vlen
-                 *   mi = vi
-                 *   l = u.data[ui] - (ui == vi)
-                 *   r = v.data[vi] - 1
-                 * 0  vi  ui  ulen  vlen
-                 *   mi = ui
-                 *   l = u.data[ui] - 1
-                 *   r = v.data[vi]
-                 * res[0, mi) = MaxDigit + 1 = 0 向前进1
-                 * res[mi] = l | r                                   ----------------|
-                 * res[mi + 1, ulen) = u.data[mi + 1, ulen) | v.data[mi + 1, ulen) --|
-                 * res[ulen, vlen) = v.data[ulen, vlen)      -------------------------> res[mi, vlen) += 1
-                 */
-                if (vi >= ui) {
-                    res_data[vi] = (u.data[ui] - (ui == vi)) | (v.data[vi] - 1);
-                } else {
-                    res_data[ui] = (u.data[ui] - 1) | v.data[vi];
-                    std::swap(ui, vi);
-                }
-                for (int64_t i = vi + 1; i < ulen; ++i) {
-                    res_data[i] = u.data[i] | v.data[i];
-                }
-                std::copy(v.data + ulen, v.data + vlen, res_data + ulen);
-                const auto carry = Utils::Increase(res_data + vi, vlen - vi);
-                res_data[res_len] = carry;
-                res_len += carry;
+            const auto ulen = -u.size;
+
+            auto* const utmp = new uint64_t[ulen];
+            Utils::Decrease(utmp, u.data, ulen);
+
+            auto res_len = ulen;
+            auto* const res_data = new uint64_t[res_len + 1];
+            Utils::Decrease(res_data, v.data, vlen);
+
+            for (size_t i = 0; i < ulen; ++i) {
+                res_data[i] |= utmp[i];
             }
-            std::fill_n(res_data, vi, 0);
+
+            delete[] utmp;
+            res_len -= res_data[res_len - 1] == 0;
+
+            const auto carry = Utils::Increase(res_data, res_len);
+            res_data[res_len] = carry;
+            res_len += carry;
+
             return BigInteger{-res_len, res_data};
         }
 
-        // u > 0 > v
-        // 结果为正数，长度 <= ulen
-        /*
-         * -v = ~v + 1
-         * (-v)[0, vi) = 0
-         * (-v)[vi] = -v[vi]
-         * (-v)[vi + 1, vlen) = ~[vi + 1, vlen)
-        */
-        int64_t vi = 0;
-        while (v.data[vi] == 0) {
-            ++vi;
-        }
-
-        if (vi >= u.size) {
-            // 0  a.size  vi  vlen
-            return zero;
-        }
-
+        // u > 0 > v  结果为正数，长度 <= u.size
+        // u & -v = u & ~(v - 1)
         auto res_size = u.size;
-        const auto res_data = new uint64_t[res_size];
-        std::fill_n(res_data, vi, 0);
-        res_data[vi] = u.data[vi] & -v.data[vi];
-        /*
-         * res[0, vi) = 0
-         * res[vi] = u.data[vi] & -v.data[vi] 可能为0
-         *
-         * 0  vi  vlen  u.size
-         * res[vi + 1, vlen) = u.data[vi + 1, vlen) & ~v.data[vi + 1, vlen)
-         * res[vlen, u.size) = u.data[vlen, u.size) 不为0
-         *
-         * 0  vi  u.size  vlen
-         * res[vi + 1, u.size) = u.data[vi + 1, u.size) & ~v.data[vi + 1, vlen)  可能为0
-         */
-        if (u.size > vlen) {
-            for (int64_t i = vi + 1; i < vlen; ++i) {
-                res_data[i] = u.data[i] & ~v.data[i];
-            }
-            std::copy(u.data + vlen, u.data + u.size, res_data + vlen);
-        } else {
-            while (res_size > vi + 1 && (u.data[res_size - 1] & ~v.data[res_size - 1]) == 0) {
+        auto* const res_data = new uint64_t[res_size];
+        if (u.size <= vlen) {
+            /*
+             * 00 00 u1 u0
+             * 11 v2 v1 v0
+             *
+             * 00 u2 u1 u0
+             * 11 v2 v1 v0
+             */
+            Utils::Decrease(res_data, v.data, u.size);
+            while (res_size > 0 && (u.data[res_size - 1] & ~res_data[res_size - 1]) == 0) {
                 --res_size;
             }
-            if (res_size == vi + 1 && res_data[vi] == 0) {
-                res_size = 0;
+            res_data[0] = u.data[0] & ~res_data[0];
+            for (size_t i = 1; i < res_size; ++i) {
+                res_data[i] = u.data[i] & ~res_data[i];
             }
-            for (int64_t i = vi + 1; i < res_size; ++i) {
-                res_data[i] = u.data[i] & ~v.data[i];
+        } else {
+            /*
+            * u3 u2 u1 u0
+            * 11 11 v1 v0
+            */
+            Utils::Decrease(res_data, v.data, vlen);
+            for (size_t i = 0; i < vlen; ++i) {
+                res_data[i] = u.data[i] & ~res_data[i];
             }
+            std::copy(u.data + vlen, u.data + u.size, res_data + vlen);
         }
         return BigInteger{res_size, res_data};
     }
 
-    constexpr BigInteger& operator&=(const BigInteger& v) noexcept {
+    constexpr BigInteger& operator&=(const BigInteger& v) {
         if (this != &v) {
             *this = *this & v;
         }
         return *this;
     }
 
-    friend constexpr BigInteger operator|(const BigInteger& lhs, const BigInteger& rhs) noexcept {
+    template <std::integral T>
+    friend constexpr BigInteger operator&(const BigInteger& lhs, T rhs) {
+        return lhs & BigInteger(rhs);
+    }
+
+    template <std::integral T>
+    constexpr BigInteger& operator&=(T v) {
+        *this = *this & v;
+        return *this;
+    }
+
+    template <std::integral T>
+    friend constexpr BigInteger operator&(T lhs, const BigInteger& rhs) {
+        return rhs & lhs;
+    }
+
+    friend constexpr BigInteger operator|(const BigInteger& lhs, const BigInteger& rhs) {
+        if (lhs.size == 0) {
+            return rhs;
+        }
+        if (rhs.size == 0) {
+            return lhs;
+        }
+
         const BigInteger& u = lhs.size >= rhs.size ? lhs : rhs;
         const BigInteger& v = &u == &lhs ? rhs : lhs;
 
-        // u >= v >= 0
-        // 结果为正数，长度 <= u.size
-        if (v.size >= 0) {
-            if (u.size == 0) {
-                return zero;
-            }
-            const auto res_size = u.size;
-            const auto res_data = new uint64_t[res_size];
-            for (int64_t i = 0; i < v.size; ++i) {
+        // u >= v > 0  结果为正数，长度 <= u.size
+        if (v.size > 0) {
+            auto* const res_data = new uint64_t[u.size];
+            for (size_t i = 0; i < v.size; ++i) {
                 res_data[i] = u.data[i] | v.data[i];
             }
             std::copy(u.data + v.size, u.data + u.size, res_data + v.size);
-            return BigInteger{res_size, res_data};
+            return BigInteger{u.size, res_data};
         }
 
         const auto vlen = -v.size;
-
-        // 0 > u >= v
-        // 结果为负数，长度 <= ulen
+        // 0 > u >= v  结果为负数，长度 <= ulen
         if (u.size < 0) {
             /*
-             *   -<-u | -v>
-             * = ~[-u | -v] + 1
+             *   -(<-u> | <-v>)
+             * = -[~(u - 1) | ~(v - 1)]
              * = ~[~(u - 1) | ~(v - 1)] + 1
-             * = <[(u - 1) & (v - 1)] + 1>
+             * = [(u - 1) & (v - 1)] + 1
             */
             const auto ulen = -u.size;
 
-            int64_t ui = 0;
-            while (u.data[ui] == 0) {
-                ++ui;
-            }
-            int64_t vi = 0;
-            while (v.data[vi] == 0) {
-                ++vi;
-            }
-
             auto res_len = ulen;
-            const auto res_data = new uint64_t[res_len];
-            if (vi >= ulen) {
-                /*
-                 * |0  ui  ulen|  vi  vlen
-                 * res[ui] = ((u.data[ui] - 1) & MaxDigit) + 1 = u.data[ui] -------------------|
-                 * res[ui + 1, ulen) = u.data[ui + 1, ulen) & MaxDigit = u.data[ui + 1, ulen) --> res[ui, ulen) = u.data[ui, ulen)  // 不为0
-                 */
-                std::copy(u.data + ui, u.data + ulen, res_data + ui);
-            } else {
-                if (vi == ui) {
-                    /*
-                     * |0  ui|
-                     * |0  vi|
-                     */
-                    /*   ~~((a - 1) & (b - 1)) + 1
-                     * = ~(~(a - 1) | ~(b - 1)) + 1
-                     * = ~(-a | -b) + 1
-                     * = -a | -b
-                     */
-                    res_data[vi] = -(-u.data[vi] | -v.data[vi]); // 不为0
-                } else {
-                    auto s = u.data;
-                    auto l = v.data;
-                    if (ui > vi) {
-                        std::swap(s, l);
-                        std::swap(ui, vi);
-                    }
-                    /*
-                     * |0  ui    |
-                     * |0      vi|
-                     * res[ui] = ((s[ui] - 1) & MaxDigit) + 1 = s[ui] -------------|  // 不为0
-                     * res[ui + 1, vi) = s[ui + 1, vi) & MaxDigit = s[ui + 1, vi) --> res[ui, vi) = s[ui, vi) // 可能为0
-                     * res[vi] = s[vi] & (l[vi] - 1) // 可能为0
-                     */
-                    std::copy(s + ui, s + vi, res_data + ui);
-                    res_data[vi] = s[vi] & (l[vi] - 1);
-                }
-                for (int64_t i = vi + 1; i < res_len; ++i) {
-                    res_data[i] = u.data[i] & v.data[i];
-                }
-                // res[ui]都不为0，长度最小为ui
-                while (res_len > ui + 1 && res_data[res_len - 1] == 0) {
-                    --res_len;
-                }
+            auto* const res_data = new uint64_t[res_len];
+            Utils::Decrease(res_data, u.data, res_len);
+
+            auto* const vtmp = new uint64_t[res_len];
+            Utils::Decrease(vtmp, v.data, res_len);
+
+            while (res_len > 0 && (res_data[res_len - 1] & vtmp[res_len - 1]) == 0) {
+                --res_len;
             }
-            std::fill_n(res_data, ui, 0); // MaxDigit + 1
+            res_data[0] &= vtmp[0];
+            for (size_t i = 1; i < res_len; ++i) {
+                res_data[i] &= vtmp[i];
+            }
+            delete[] vtmp;
+
+            const auto carry = Utils::Increase(res_data, res_len);
+            res_data[res_len] = carry;
+            res_len += carry;
+
             return BigInteger{-res_len, res_data};
         }
 
-        // u > 0 > v
-        // 结果为负数，长度
+        // u > 0 > v  结果为负数，长度 <= vlen
+        /*
+         *   -(<u> | <-v>)
+         * = -[u | ~(v - 1)]
+         * = ~[u | ~(v - 1)] + 1
+         * = [~u & (v - 1)] + 1
+        */
+        auto res_len = vlen;
+        auto* const res_data = new uint64_t[res_len];
+        Utils::Decrease(res_data, v.data, vlen);
+
+        if (u.size < vlen) {
+            /*
+             * 11 11 u1 u0
+             * 00 v2 v1 v0
+             */
+            for (size_t i = 0; i < u.size; ++i) {
+                res_data[i] &= ~u.data[i];
+            }
+        } else {
+            /*
+            * 11 u2 u1 u0
+            * 00 00 v1 v0
+            *
+            * 11 u2 u1 u0
+            * 00 v2 v1 v0
+            */
+            while (res_len > 0 && (~u.data[res_len - 1] & res_data[res_len - 1]) == 0) {
+                --res_len;
+            }
+            res_data[0] = u.data[0] & ~res_data[0];
+            for (size_t i = 1; i < res_len; ++i) {
+                res_data[i] &= ~u.data[i];
+            }
+        }
+
+        const auto carry = Utils::Increase(res_data, res_len);
+        res_data[res_len] = carry;
+        res_len += carry;
+        return BigInteger{-res_len, res_data};
+    }
+
+    constexpr BigInteger& operator|=(const BigInteger& v) {
+        if (this != &v) {
+            *this = *this | v;
+        }
+        return *this;
+    }
+
+    template <std::integral T>
+    friend constexpr BigInteger operator|(const BigInteger& lhs, T rhs) {
+        return lhs | BigInteger(rhs);
+    }
+
+    template <std::integral T>
+    constexpr BigInteger& operator|=(T v) {
+        *this = *this | v;
+        return *this;
+    }
+
+    template <std::integral T>
+    friend constexpr BigInteger operator|(T lhs, const BigInteger& rhs) {
+        return rhs | lhs;
     }
 
 public:
